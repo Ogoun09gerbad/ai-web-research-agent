@@ -1,0 +1,44 @@
+# BUG FIXED:
+#   `depends_on: backend` only waits for the container to *start*, not for the
+#   FastAPI process inside it to be *ready*.  If the backend is still loading
+#   sentence-transformers when the frontend boots, API calls fail silently.
+#   Adding a healthcheck + `condition: service_healthy` in depends_on ensures
+#   Docker Compose waits until /health returns 200 before starting the frontend.
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-web-agent-backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s   # give sentence-transformers time to load on first boot
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-web-agent-frontend
+    command: streamlit run frontend/streamlit_app.py --server.address 0.0.0.0 --server.port 8501
+    env_file:
+      - .env
+    environment:
+      - API_BASE_URL=http://backend:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      backend:
+        condition: service_healthy   # BUG FIX: wait for /health, not just container start
+    volumes:
+      - ./data:/app/data
